@@ -1,0 +1,11 @@
+.panel{
+    text-align:center;
+    padding:70px 100px;
+    border-radius:30px;
+    background:rgba(0,255,180,0.05);
+    backdrop-filter:blur(25px);
+    box-shadow:
+        0 0 60px rgba(109, 111, 111, 0.15),
+        inset 0 0 40px rgba(0,255,200,0.05);
+    animation:fadeIn 1.5s ease-in-out;
+}
