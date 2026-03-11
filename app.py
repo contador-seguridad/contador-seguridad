@@ -1,10 +1,12 @@
-from flask import Flask, render_template_string, request, redirect, send_file
-from datetime import datetime
+from flask import Flask, render_template, request, redirect, send_file, session, url_for
+from datetime import datetime, timedelta
 import sqlite3
 from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill
 import os
 
 app = Flask(__name__)
+app.secret_key = "super_secret_safety_key" # In production, use an environment variable
 
 # ------------------------
 # BASE DE DATOS
@@ -29,7 +31,8 @@ def init_db():
         fecha_fin TEXT,
         dias INTEGER,
         horas INTEGER,
-        minutos INTEGER
+        minutos INTEGER,
+        segundos INTEGER
     )
     """)
 
@@ -77,38 +80,45 @@ def reiniciar():
     diferencia = ahora - fecha_inicio
 
     dias = diferencia.days
-    horas = diferencia.seconds // 3600
-    minutos = (diferencia.seconds % 3600) // 60
+    segundos_totales = diferencia.seconds
+    horas = segundos_totales // 3600
+    minutos = (segundos_totales % 3600) // 60
+    segundos = segundos_totales % 60
 
     record_actual = obtener_record()
-
     if dias > record_actual:
         actualizar_record(dias)
 
-def borrar_historial():
+    # GUARDAR EN HISTORIAL
     conn = sqlite3.connect("database.db")
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM historial")
-    conn.commit()
-    conn.close()
-
-    conn = sqlite3.connect("database.db")
-    cursor = conn.cursor()
-
     cursor.execute("""
-        INSERT INTO historial (fecha_inicio, fecha_fin, dias, horas, minutos)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO historial (fecha_inicio, fecha_fin, dias, horas, minutos, segundos)
+        VALUES (?, ?, ?, ?, ?, ?)
     """, (
         fecha_inicio.isoformat(),
         ahora.isoformat(),
         dias,
         horas,
-        minutos
+        minutos,
+        segundos
     ))
 
+    # REINICIAR CONTADOR
     cursor.execute("UPDATE contador SET fecha_inicio = ? WHERE id = 1",
                    (ahora.isoformat(),))
 
+    conn.commit()
+    conn.close()
+
+
+def borrar_historial():
+    conn = sqlite3.connect("database.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM historial")
+    cursor.execute("UPDATE contador SET record_dias = 0 WHERE id = 1")
+    # Opcional: reiniciar también la fecha de inicio al borrar todo
+    cursor.execute("UPDATE contador SET fecha_inicio = ? WHERE id = 1", (datetime.now().isoformat(),))
     conn.commit()
     conn.close()
 
@@ -119,9 +129,12 @@ def borrar_historial():
 
 @app.route("/exportar")
 def exportar_excel():
+    if not session.get("admin"):
+        return redirect(url_for("admin"))
+        
     conn = sqlite3.connect("database.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT fecha_inicio, fecha_fin, dias, horas, minutos FROM historial")
+    cursor.execute("SELECT fecha_inicio, fecha_fin, dias, horas, minutos, segundos FROM historial ORDER BY id DESC")
     datos = cursor.fetchall()
     conn.close()
 
@@ -129,24 +142,58 @@ def exportar_excel():
     ws = wb.active
     ws.title = "Historial Accidentes"
 
-    ws.append(["Fecha Inicio", "Fecha Fin", "Días", "Horas", "Minutos"])
+    # Estilos para el encabezado
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="2C3E50", end_color="2C3E50", fill_type="solid")
+    alignment = Alignment(horizontal="center")
+
+    headers = ["Fecha Inicio", "Fecha Fin", "Días", "Horas", "Minutos", "Segundos"]
+    ws.append(headers)
+
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = alignment
 
     for fila in datos:
-        ws.append(fila)
+        # Formatear fechas para que sean más legibles en Excel
+        f_inicio = datetime.fromisoformat(fila[0]).strftime("%Y-%m-%d %H:%M:%S")
+        f_fin = datetime.fromisoformat(fila[1]).strftime("%Y-%m-%d %H:%M:%S")
+        ws.append([f_inicio, f_fin, fila[2], fila[3], fila[4], fila[5]])
+
+    # Ajustar ancho de columnas
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        ws.column_dimensions[column].width = max_length + 2
 
     archivo = "historial_accidentes.xlsx"
     wb.save(archivo)
 
     return send_file(archivo, as_attachment=True)
 
-@app.route("/borrar", methods=["POST"])
-def ruta_borrar():
-
+@app.route("/reiniciar_accidente", methods=["POST"])
+def ruta_reiniciar():
     if not session.get("admin"):
-        return redirect("/admin")
+        return redirect(url_for("admin"))
+
+    reiniciar()
+    return redirect(url_for("admin"))
+
+
+@app.route("/limpiar_historial", methods=["POST"])
+def ruta_limpiar():
+    if not session.get("admin"):
+        return redirect(url_for("admin"))
 
     borrar_historial()
-    return redirect("/panel")
+    return redirect(url_for("admin"))
 
 
 # ------------------------
@@ -156,200 +203,42 @@ def ruta_borrar():
 @app.route("/")
 def home():
     fecha_inicio = obtener_fecha()
-
-    return render_template_string("""
-<!DOCTYPE html>
-<html>
-<head>
-<title>Contador Seguridad</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-<style>
-*{
-    box-sizing:border-box;
-}
-
-body{
-    margin:0;
-    min-height:100dvh;
-    background:radial-gradient(circle at center,#001a1f,#002b36,#001018);
-    font-family:'Segoe UI',sans-serif;
-    display:flex;
-    justify-content:center;
-    align-items:center;
-    color:#dff;
-    padding:20px;
-}
-
-.panel{
-    width:100%;
-    max-width:900px;
-    text-align:center;
-    padding:clamp(20px,5vw,50px);
-    border-radius:25px;
-    background:#111c2d;
-    box-shadow:0 20px 60px rgba(0,0,0,0.5);
-}
-
-.titulo-seccion{
-    font-size:clamp(16px,3vw,28px);
-    letter-spacing:3px;
-    text-transform:uppercase;
-    color:#93c5fd;
-    margin:20px 0;
-}
-
-#contador{
-    font-size:clamp(36px,8vw,110px);
-    font-weight:bold;
-    letter-spacing:4px;
-    color:#00ff88;
-    margin:30px 0;
-    transition:transform 0.3s ease;
-    word-wrap:break-word;
-}
-
-.hidden-admin{
-    position:fixed;
-    bottom:10px;
-    right:10px;
-    width:40px;
-    height:40px;
-    cursor:pointer;
-    opacity:0.05;
-}
-</style>
-</head>
-<body>
-
-<div class="panel">
-
-    <div class="titulo-seccion">Bienvenidos</div>
-    <div class="titulo-seccion">Hoy cumplimos</div>
-
-    <div id="contador"></div>
-
-    <div class="titulo-seccion">Sin accidentes</div>
-    <div class="titulo-seccion">Récord histórico: {{record}} días</div>
-    <div class="titulo-seccion">Nuestro objetivo es Cero Accidentes</div>
-
-</div>
-
-<div class="hidden-admin" ondblclick="window.location='/admin'"></div>
-
-<script>
-let inicio = new Date("{{ fecha_inicio }}").getTime();
-let ultimoDia = 0;
-
-function digitalBeep(){
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(1200, ctx.currentTime);
-    gain.gain.setValueAtTime(0.05, ctx.currentTime);
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-
-    osc.start();
-    osc.stop(ctx.currentTime + 0.15);
-}
-
-setInterval(function(){
-    let ahora = new Date().getTime();
-    let diff = ahora - inicio;
-
-    let dias = Math.floor(diff/(1000*60*60*24));
-    let horas = Math.floor((diff/(1000*60*60))%24);
-    let minutos = Math.floor((diff/(1000*60))%60);
-
-    document.getElementById("contador").innerHTML =
-        dias+" DÍAS · "+horas+" HRS · "+minutos+" MIN";
-
-    if(dias>ultimoDia){
-        ultimoDia=dias;
-        let contador = document.getElementById("contador");
-        contador.style.transform="scale(1.1)";
-        setTimeout(()=>{contador.style.transform="scale(1)";},300);
-        digitalBeep();
-    }
-
-},1000);
-</script>
-
-</body>
-</html>
-""", 
-fecha_inicio=fecha_inicio.isoformat(),
-record=obtener_record()
-)
+    return render_template("index.html", 
+                         fecha_inicio=fecha_inicio.isoformat(),
+                         record=obtener_record())
 
 
 # ------------------------
 # ADMIN
 # ------------------------
 
-@app.route("/admin", methods=["GET", "POST"])
+@app.route("/login", methods=["POST"])
+def login():
+    if request.form.get("password") == "admin123":
+        session["admin"] = True
+    return redirect(url_for("admin"))
+
+
+@app.route("/logout")
+def logout():
+    session.pop("admin", None)
+    return redirect(url_for("home"))
+
+
+@app.route("/admin")
 def admin():
-    if request.method == "POST":
-        if request.form["password"] == "admin123":
-            reiniciar()
-            return redirect("/admin")
-
-    return """
-    <html>
-    <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-    body{
-        background:#0f172a;
-        font-family:Segoe UI;
-        color:white;
-        text-align:center;
-        padding:50px 20px;
-    }
-    input,button{
-        padding:12px 18px;
-        margin:10px;
-        border-radius:10px;
-        border:none;
-        width:90%;
-        max-width:300px;
-        font-size:16px;
-    }
-    button{
-        background:#00b894;
-        color:white;
-        cursor:pointer;
-    }
-    a{
-        display:block;
-        margin-top:20px;
-        color:#66ccff;
-        text-decoration:none;
-    }
-    </style>
-    </head>
-    <body>
-
-    <h2>Panel Administrador</h2>
-
-    <form method="post">
-        <input type="password" name="password" placeholder="Contraseña">
-        <br>
-        <button type="submit">Reiniciar por Accidente</button>
-    </form>
-
-    <a href="/exportar">Descargar Historial en Excel</a>
-    <a href="/">Volver al Contador</a>
-
-    </body>
-    </html>
-    """
+    if not session.get("admin"):
+        return render_template("login.html")
+    
+    conn = sqlite3.connect("database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM historial ORDER BY id DESC LIMIT 10")
+    historial = cursor.fetchall()
+    conn.close()
+    
+    return render_template("admin.html", historial=historial)
 
 
 if __name__ == "__main__":
     init_db()
-    app.run(host="0.0.0.0", port=5000,)
+    app.run(host="0.0.0.0", port=5000, debug=True)
