@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de Administración</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+</head>
+
+<body style="display: block;">
+    <div class="admin-container">
+        <div class="card">
+            <h1>Panel Administrativo</h1>
+            <h2>Gestión de Seguridad</h2>
+
+            <div style="display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; margin-bottom: 30px;">
+                <form action="{{ url_for('ruta_reiniciar') }}" method="post"
+                    onsubmit="return confirm('¿Está seguro de reiniciar el contador por un accidente?')">
+                    <button type="submit" class="btn btn-danger">Reiniciar por Accidente</button>
+                </form>
+
+                <a href="{{ url_for('exportar_excel') }}" class="btn btn-primary">Descargar Excel Full</a>
+
+                <form action="{{ url_for('ruta_limpiar') }}" method="post"
+                    onsubmit="return confirm('¿Está seguro de BORRAR TODO el historial y récords? Esta acción no se puede deshacer.')">
+                    <button type="submit" class="btn btn-secondary">Limpiar Historial</button>
+                </form>
+
+                <a href="{{ url_for('logout') }}" class="btn btn-secondary">Cerrar Sesión</a>
+            </div>
+
+            <h3 style="color: var(--primary); text-align: left; margin-bottom: 15px;">Últimos Accidentes Registrados
+            </h3>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Inicio</th>
+                            <th>Fin (Accidente)</th>
+                            <th>Días Logrados</th>
+                            <th>Tiempo Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if historial %}
+                        {% for row in historial %}
+                        <tr>
+                            <td style="font-size: 0.8rem;">{{ row[1][:16] }}</td>
+                            <td style="font-size: 0.8rem;">{{ row[2][:16] }}</td>
+                            <td style="font-weight: bold; color: var(--danger);">{{ row[3] }}</td>
+                            <td style="font-size: 0.8rem;">{{ row[4] }}h {{ row[5] }}m {{ row[6] }}s</td>
+                        </tr>
+                        {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="4" style="text-align: center; color: var(--text-muted);">No hay registros en el
+                                historial.</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div style="margin-top: 30px;">
+                <a href="/" class="btn btn-secondary">Ver Dashboard Público</a>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>
